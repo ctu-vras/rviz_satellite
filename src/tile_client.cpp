@@ -231,25 +231,44 @@ void TileClient::request_finished(QNetworkReply * reply)
   tile_requests_.erase(tile_request);
 }
 
+void TileClient::cancelRequest(const TileId & tile_id)
+{
+  auto request = tile_requests_.extract(tile_id);
+  if (request.empty()) {
+    return;
+  }
+  // the request is not in the map anymore, so its cancellation is not seen by its own report
+  cancel(std::move(request.mapped()));
+  if (failing_requests_ == 0) {
+    error_.clear();
+  }
+}
+
 void TileClient::cancelRequests()
 {
   // take the requests out of the map first, because aborting a reply reports the failure right
   // away and that report must not see the requests which are being cancelled
   auto cancelled = std::exchange(tile_requests_, std::map<TileId, TileRequest>{});
+  for (auto & tile_request : cancelled) {
+    cancel(std::move(tile_request.second));
+  }
   error_.clear();
   failing_requests_ = 0;
-  for (auto & tile_request : cancelled) {
-    QNetworkReply * reply = tile_request.second.reply;
-    if (reply != nullptr) {
-      tile_request.second.reply = nullptr;
-      reply->abort();
-    }
-    try {
-      tile_request.second.promise->set_exception(
-        std::make_exception_ptr(tile_request_error("Tile request cancelled")));
-    } catch (const std::future_error &) {
-      // the image arrived just now, which is fine, nobody is waiting for it anymore
-    }
+}
+
+void TileClient::cancel(TileRequest && request)
+{
+  if (request.reply != nullptr) {
+    request.reply->abort();
+  }
+  if (request.failures > 0 && --failing_requests_ == 0) {
+    error_.clear();
+  }
+  try {
+    request.promise->set_exception(
+      std::make_exception_ptr(tile_request_error("Tile request cancelled")));
+  } catch (const std::future_error &) {
+    // the image arrived just now, which is fine, nobody is waiting for it anymore
   }
 }
 

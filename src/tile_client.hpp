@@ -56,6 +56,8 @@ private:
 
   /// retrieves the image of the tile now, unless its request was dropped in the meantime
   void sendRequest(const TileId & tile_id);
+  /// stops the download of the tile and resolves its future by a tile_request_error
+  void cancel(TileRequest && request);
 
   QNetworkAccessManager * manager_;
   std::map<TileId, TileRequest> tile_requests_;
@@ -115,10 +117,15 @@ public:
   }
 
   /**
-   * @brief Drop all pending requests, because nobody waits for their images anymore.
+   * @brief Drop the request of the tile, because nobody waits for its image anymore.
    *
-   * Their futures are resolved by a tile_request_error and the running downloads are stopped, so
-   * that tiles which are not displayed anymore are not retrieved from the internet either.
+   * Its future is resolved by a tile_request_error and the running download is stopped, so that a
+   * tile which is not displayed anymore is not retrieved from the internet either.
+   */
+  void cancelRequest(const TileId & tile_id);
+
+  /**
+   * @brief Drop all pending requests, see cancelRequest().
    */
   void cancelRequests();
 

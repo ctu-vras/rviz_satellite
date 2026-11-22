@@ -235,7 +235,7 @@ void AerialMapDisplay::updateDrawUnder()
 void AerialMapDisplay::updateTileUrl()
 {
   // updated tile url may work
-  resetTileServerError();
+  resetTileRequestStatus();
   // rebuild on next received message
   resetMap();
 }
@@ -243,7 +243,7 @@ void AerialMapDisplay::updateTileUrl()
 void AerialMapDisplay::updateZoom()
 {
   // updated zoom may be supported by this tile server
-  resetTileServerError();
+  resetTileRequestStatus();
   // rebuild on next received message
   resetMap();
 }
@@ -292,9 +292,6 @@ void AerialMapDisplay::processMessage(const NavSatFix::ConstSharedPtr msg)
   } else {
     setStatus(rviz_common::properties::StatusProperty::Ok, MESSAGE_STATUS, "Message OK");
   }
-  if (tile_server_had_errors_) {
-    return;
-  }
   last_fix_ = msg;
   if (!validateProperties()) {
     return;
@@ -321,22 +318,19 @@ void AerialMapDisplay::processMessage(const NavSatFix::ConstSharedPtr msg)
             // if center tile changed to some index direction, within the bounds of the surrounding blocks,
             // create only the missing tiles
             if (!shiftMap(center, offset, tile_size_m)) {
-              pending_tiles_.clear();
-              tiles_.clear();
+              clearTiles();
               buildMap(tile_at_fix, tile_size_m);
             }
           } else {
             // if more tiles than blocks are skipped, recreate the entire map
-            pending_tiles_.clear();
-            tiles_.clear();
+            clearTiles();
             buildMap(tile_at_fix, tile_size_m);
           }
         }
       }
     } catch (const tile_request_error & e) {
-      tile_server_had_errors_ = true;
-      pending_tiles_.clear();
-      tiles_.clear();
+      // a tile which the tile server does not have is left out, the map is built around it
+      RVIZ_COMMON_LOG_WARNING_STREAM("Failed to build the map: " << e.what());
       setStatus(rviz_common::properties::StatusProperty::Error, TILE_REQUEST_STATUS, e.what());
     }
   }
@@ -366,6 +360,9 @@ bool AerialMapDisplay::shiftMap(TileCoordinate center, Ogre::Vector2i offset, do
       RVIZ_COMMON_LOG_ERROR("Failed to erase tile at far end");
       return false;
     }
+    // the image of the deleted tile is not displayed anymore, so do not wait for it or download it
+    tile_client_.cancelRequest(tile_to_delete);
+    pending_tiles_.erase(tile_to_delete);
   }
 
   // shift existing tiles to new center
@@ -472,45 +469,40 @@ void AerialMapDisplay::update(Duration, Duration)
 
   // resolve pending tile requests, and set the received images as textures of their tiles
   for (auto it = pending_tiles_.begin(); it != pending_tiles_.end();) {
+    if (it->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+      // check next request
+      ++it;
+      continue;
+    }
+    const TileId tile_id = it->first;
+    QImage image;
+    bool received = false;
     try {
-      if (it->second.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        try {
-          auto image = it->second.get();
-          if (image.isNull()) {
-            // failed to read file, e.g., from filesystem
-            continue;
-          }
-          auto tile_to_update = tiles_.find(it->first);
-          if (tile_to_update == tiles_.end()) {
-            // request was cleared since it was issued
-            continue;
-          }
-          // the tile is made visible below, once the map transform is known to be valid
-          tile_to_update->second.updateData(image);
-          // remove from pending requests
-          it = pending_tiles_.erase(it);
-        } catch (const tile_request_error & e) {
-          // log error and abort requests
-          RVIZ_COMMON_LOG_ERROR_STREAM("Tile request failed: " << e.what());
-          it = pending_tiles_.end();
-          setStatus(rviz_common::properties::StatusProperty::Error, TILE_REQUEST_STATUS, e.what());
-          // disable requests until tile server relevant properties change
-          tile_server_had_errors_ = true;
-        }
-      } else {
-        // check next request
-        ++it;
+      image = it->second.get();
+      received = !image.isNull();
+      if (!received) {
+        // failed to read file, e.g., from filesystem
+        RVIZ_COMMON_LOG_WARNING_STREAM("Image of tile '" << tile_id << "' could not be read");
       }
+    } catch (const tile_request_error & e) {
+      // only this one tile is lost, the map keeps being displayed with the tiles which are here
+      RVIZ_COMMON_LOG_WARNING_STREAM("Tile request failed: " << e.what());
     } catch (const std::future_error & e) {
       RVIZ_COMMON_LOG_DEBUG_STREAM("Tile request destroyed before resolved: " << e.what());
-      it = pending_tiles_.erase(it);
     }
+    it = pending_tiles_.erase(it);
+    if (!received) {
+      continue;
+    }
+    auto tile_to_update = tiles_.find(tile_id);
+    if (tile_to_update == tiles_.end()) {
+      // the tile was removed since its request was issued
+      continue;
+    }
+    // the tile is made visible below, once the map transform is known to be valid
+    tile_to_update->second.updateData(image);
   }
-  // if an error was just discovered
-  if (tile_server_had_errors_) {
-    pending_tiles_.clear();
-    tiles_.clear();
-  }
+  updateTileRequestStatus();
 
   if (!last_fix_) {
     return;
@@ -523,6 +515,9 @@ void AerialMapDisplay::update(Duration, Duration)
 
   Ogre::Vector3 _ignored_translation;
   Ogre::Quaternion orientation_to_map = Ogre::Quaternion::IDENTITY;
+  Ogre::Vector3 sensor_translation;
+  Ogre::Quaternion _ignored_orientation;
+  bool transform_valid = true;
   try {
     // get transformation of fixed frame to map, to set the aerial map orientation to be aligned with ENU
     get_fixed_frame_transform_fallback_to_latest(
@@ -531,13 +526,8 @@ void AerialMapDisplay::update(Duration, Duration)
     setStatus(rviz_common::properties::StatusProperty::Ok, ORIENTATION_STATUS, "Map transform OK");
   } catch (const rviz_common::transformation::FrameTransformerException & e) {
     setStatus(rviz_common::properties::StatusProperty::Error, ORIENTATION_STATUS, e.what());
-    // without a valid transform the map would be drawn at a stale or wrong pose, so hide it
-    setTilesVisible(false);
-    return;
+    transform_valid = false;
   }
-
-  Ogre::Vector3 sensor_translation;
-  Ogre::Quaternion _ignored_orientation;
   try {
     // get transformation of sensor frame
     get_fixed_frame_transform_fallback_to_latest(
@@ -546,9 +536,24 @@ void AerialMapDisplay::update(Duration, Duration)
     setStatus(rviz_common::properties::StatusProperty::Ok, TRANSFORM_STATUS, "Transform OK");
   } catch (const rviz_common::transformation::FrameTransformerException & e) {
     setStatus(rviz_common::properties::StatusProperty::Error, TRANSFORM_STATUS, e.what());
-    setTilesVisible(false);
+    transform_valid = false;
+  }
+
+  if (!transform_valid) {
+    // keep the map shown as it is, i.e. at the pose of the last valid fix: this is only a
+    // momentary outage of TF or of the fixes, which is reported in the status above. Hiding it
+    // would make the whole map disappear just because the sensor position is unknown right now.
+    if (map_pose_valid_) {
+      // the map has a pose to be shown at, so only stop updating it until the transform works
+      // again, and let the configured timeout fade the map out as usual
+      updateAlpha(t);
+    } else {
+      // the map has no pose to be shown at yet, so the tiles cannot be displayed anywhere
+      setTilesVisible(false);
+    }
     return;
   }
+  map_pose_valid_ = true;
   setTilesVisible(true);
 
   // "example tile", since their zoom should be uniform
@@ -579,18 +584,42 @@ void AerialMapDisplay::update(Duration, Duration)
   updateAlpha(t);
 }
 
-void AerialMapDisplay::resetMap()
+void AerialMapDisplay::clearTiles()
 {
-  const std::lock_guard<std::mutex> lock(tiles_mutex_);
+  // the images of the removed tiles are not displayed anymore, so stop retrieving them
+  tile_client_.cancelRequests();
   tiles_.clear();
   pending_tiles_.clear();
 }
 
-void AerialMapDisplay::resetTileServerError()
+void AerialMapDisplay::resetMap()
 {
-  tile_server_had_errors_ = false;
+  const std::lock_guard<std::mutex> lock(tiles_mutex_);
+  clearTiles();
+}
+
+void AerialMapDisplay::resetTileRequestStatus()
+{
+  last_tile_request_error_.clear();
   setStatus(
     rviz_common::properties::StatusProperty::Ok, TILE_REQUEST_STATUS, "Last tile request OK");
+}
+
+void AerialMapDisplay::updateTileRequestStatus()
+{
+  const std::string & error = tile_client_.error();
+  if (error == last_tile_request_error_) {
+    return;
+  }
+  last_tile_request_error_ = error;
+  if (error.empty()) {
+    setStatus(
+      rviz_common::properties::StatusProperty::Ok, TILE_REQUEST_STATUS, "Last tile request OK");
+  } else {
+    setStatus(
+      rviz_common::properties::StatusProperty::Error, TILE_REQUEST_STATUS,
+      QString::fromStdString(error));
+  }
 }
 
 void AerialMapDisplay::updateAlpha(const rclcpp::Time & t)
@@ -669,7 +698,8 @@ void AerialMapDisplay::reset()
   RTDClass::reset();
   resetMap();
   last_fix_.reset();
-  resetTileServerError();
+  map_pose_valid_ = false;
+  resetTileRequestStatus();
 }
 
 }  // namespace rviz_satellite

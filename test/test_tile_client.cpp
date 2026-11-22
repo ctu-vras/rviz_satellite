@@ -245,6 +245,26 @@ TEST(TileClient, cancelledRequestsDoNotHangAndCanBeRepeated)
 }
 
 /**
+ * Only the tile which is not displayed anymore is dropped, the other requests stay in place.
+ */
+TEST(TileClient, onlyRequestedTileIsCancelled)
+{
+  FakeTileServer server{Response::NotAnswering};
+  TileClient client;
+
+  auto cancelled = client.request(tile(server.url(), 1));
+  auto kept = client.request(tile(server.url(), 2));
+  ASSERT_TRUE(runUntil([&server] { return server.requests() >= 2; }));
+
+  client.cancelRequest(tile(server.url(), 1));
+  EXPECT_THROW(cancelled.get(), tile_request_error);
+  EXPECT_TRUE(isPending(kept));
+
+  client.cancelRequests();
+  EXPECT_THROW(kept.get(), tile_request_error);
+}
+
+/**
  * A received tile is stored in the cache, so it is not retrieved from the internet again.
  */
 TEST(TileClient, receivedTilesAreServedFromCache)

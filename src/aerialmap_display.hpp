@@ -79,9 +79,15 @@ protected:
 
   void buildTile(TileCoordinate coordinate, Ogre::Vector2i offset, double size);
 
+  /// removes all tiles, expecting tiles_mutex_ to be held
+  void clearTiles();
+
   void resetMap();
 
-  void resetTileServerError();
+  void resetTileRequestStatus();
+
+  /// reports why the tiles do not arrive, or that they do, only when it changes
+  void updateTileRequestStatus();
 
   void updateAlpha(const rclcpp::Time & t);
 
@@ -118,6 +124,12 @@ protected:
   std::map<TileId, std::shared_future<QImage>> pending_tiles_;
   std::map<TileId, TileObject> tiles_;
 
+  /// the map was already shown at a pose computed from a valid fix, and can therefore keep being
+  /// shown there even if the current transformations cannot be looked up
+  bool map_pose_valid_ = false;
+  /// why the tile requests currently fail, to not report the same state repeatedly
+  std::string last_tile_request_error_;
+
   /**
    * @brief Prefix of the names of all Ogre resources (materials, textures, meshes) created by this
    * display. Ogre keeps them in registries shared by the whole process, so several RViz instances
@@ -127,7 +139,6 @@ protected:
   std::string resource_prefix_;
 
   sensor_msgs::msg::NavSatFix::ConstSharedPtr last_fix_;
-  bool tile_server_had_errors_{false};
 
   static const QString MESSAGE_STATUS;
   static const QString TILE_REQUEST_STATUS;
