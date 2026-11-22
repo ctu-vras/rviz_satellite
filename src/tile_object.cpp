@@ -51,10 +51,13 @@ namespace rviz_satellite
 
 TileObject::TileObject(
   Ogre::SceneManager * scene_manager, Ogre::SceneNode * parent_scene_node, std::string unique_id,
-  Ogre::Real tile_size, Ogre::Real x, Ogre::Real y, bool draw_under)
+  const std::string & resource_prefix, Ogre::Real tile_size, Ogre::Real x, Ogre::Real y,
+  bool draw_under)
 : scene_manager_(scene_manager),
   parent_scene_node_(parent_scene_node),
-  unique_id_(unique_id),
+  // materials, meshes and textures are registered in process-wide Ogre singletons, thus all names
+  // derived from the tile identification are prefixed by the identification of the owning display
+  unique_id_(resource_prefix + unique_id),
   manual_object_(nullptr)
 {
   setupMaterial();

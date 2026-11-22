@@ -118,6 +118,14 @@ protected:
   std::map<TileId, std::future<QImage>> pending_tiles_;
   std::map<TileId, TileObject> tiles_;
 
+  /**
+   * @brief Prefix of the names of all Ogre resources (materials, textures, meshes) created by this
+   * display. Ogre keeps them in registries shared by the whole process, so several RViz instances
+   * running in one process (e.g. RViz panels embedded into a single RQt window) would otherwise
+   * create and destroy the resources of each other's tiles.
+   */
+  std::string resource_prefix_;
+
   sensor_msgs::msg::NavSatFix::ConstSharedPtr last_fix_;
   bool tile_server_had_errors_{false};
 

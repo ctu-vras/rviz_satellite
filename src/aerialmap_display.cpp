@@ -21,6 +21,7 @@ limitations under the License. */
 #include <OgreTextureManager.h>
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
 #include <rcpputils/asserts.hpp>
 #include <string>
@@ -160,6 +161,10 @@ void AerialMapDisplay::onInitialize()
 {
   RTDClass::onInitialize();
   orientation_frame_property_->setFrameManager(context_->getFrameManager());
+
+  static std::atomic<unsigned int> created_displays{0};
+  resource_prefix_ = scene_manager_->getName() + '_' + getName().toStdString() + '_' +
+                     std::to_string(++created_displays) + '_';
 }
 
 void AerialMapDisplay::onEnable()
@@ -416,7 +421,8 @@ void AerialMapDisplay::buildTile(TileCoordinate coordinate, Ogre::Vector2i offse
   ss << tile_id;
   auto tile_emplace_result = tiles_.emplace(
     std::piecewise_construct, std::forward_as_tuple(tile_id),
-    std::forward_as_tuple(scene_manager_, scene_node_, ss.str(), size, tx, ty, false));
+    std::forward_as_tuple(
+      scene_manager_, scene_node_, ss.str(), resource_prefix_, size, tx, ty, false));
   // hide until the tile request was completed
   tile_emplace_result.first->second.setVisible(false);
   rcpputils::assert_true(tile_emplace_result.second, "failed to store tile object");

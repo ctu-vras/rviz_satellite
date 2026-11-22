@@ -29,9 +29,16 @@ namespace rviz_satellite
 class TileObject
 {
 public:
+  /**
+   * @param unique_id identifies the tile, e.g. by its server url and coordinates
+   * @param resource_prefix is prepended to the names of the created Ogre resources. Ogre keeps
+   *   its materials and textures in process-wide registries, so the names must be unique across
+   *   all displays of all RViz instances running in the same process.
+   */
   TileObject(
     Ogre::SceneManager * scene_manager, Ogre::SceneNode * parent_scene_node, std::string unique_id,
-    Ogre::Real tile_size, Ogre::Real x, Ogre::Real y, bool draw_under);
+    const std::string & resource_prefix, Ogre::Real tile_size, Ogre::Real x, Ogre::Real y,
+    bool draw_under);
 
   TileObject() = delete;
 
