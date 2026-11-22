@@ -8,7 +8,8 @@ Rviz plugin for displaying satellite maps at the position of a `sensor_msgs/msg/
 
 Add an instance of `AerialMap` to your Rviz config and point it to a `sensor_msgs/msg/NavSatFix` topic.
 
-Map tiles will be cached to `$HOME/.cache/rviz_satellite`.
+Map tiles will be cached to `$HOME/.cache/rviz_satellite`, so an area which was displayed once is rendered without another request to the tile server.
+How many tiles are kept there is limited to 200 MB, and when a cached tile is retrieved again from the server is decided by the caching headers of that server.
 At present the cache does not expire automatically - you should delete the files in the folder if you want the images to be reloaded.
 
 Currently, the [OpenStreetMap](http://wiki.openstreetmap.org/wiki/Slippy_map_tilenames) convention for tile URLs is supported.
@@ -56,6 +57,18 @@ Please refer to the respective terms of service and copyrights.
 Recommended values are 16-19, as anything smaller is _very_ low resolution. 22 is the current max.
 * `Blocks` number of adjacent tiles in addition to the center tile to load, 8 maximum.
 * `Timeout` specifies a timeout since the last received message timestamp, after which the map will be faded out; disable by setting to 0.
+
+## Missing fixes and failing tile servers
+
+The map is kept displayed whenever there is anything to display it from:
+
+* If no fix arrives, or the transformation of the sensor frame cannot be looked up, the map stays where the last valid fix put it instead of disappearing.
+  The reason is reported in the `Transform` and `Map Orientation` status of the display.
+* Tiles which cannot be retrieved do not affect the tiles which are here.
+  Requests which fail for a temporary reason (a timeout, an unreachable or erroring server) are repeated with a growing delay, so the map recovers on its own as soon as the server answers again.
+  A tile the server claims not to have is asked for only once and stays empty.
+  The `TileRequest` status reports why the tiles currently do not arrive.
+* A tile which is not displayed anymore, because the map moved on or because its configuration changed, is not retrieved from the internet anymore.
 
 ## Local Maps
 
