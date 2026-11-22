@@ -61,10 +61,8 @@ private:
 
   QNetworkAccessManager * manager_;
   std::map<TileId, TileRequest> tile_requests_;
-  /// why the pending requests currently do not succeed, empty if they do not fail
+  /// why the last request failed, empty if the requests currently work
   std::string error_;
-  /// how many of the pending requests already failed at least once
-  int failing_requests_ = 0;
 
   /// delay of the first repeated request, doubled with every next failure of the same tile
   static constexpr int initial_retry_delay_ms = 250;
@@ -109,7 +107,7 @@ public:
   std::shared_future<QImage> request_remote(const TileId & tile_id);
 
   /**
-   * @brief Reason why the pending requests currently do not succeed, empty if they do not fail.
+   * @brief Reason of the last failure of a request, empty if the requests currently work.
    */
   const std::string & error() const
   {

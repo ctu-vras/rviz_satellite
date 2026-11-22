@@ -201,18 +201,14 @@ void TileClient::request_finished(QNetworkReply * reply)
   }
 
   if (error_message.empty()) {
-    if (tile_request->second.failures > 0 && --failing_requests_ == 0) {
-      // the last tile which failed was retrieved, so everything works again
-      error_.clear();
-    }
+    // a tile which arrived means the failures are over, whatever they were
+    error_.clear();
     tile_request->second.promise->set_value(image);
     tile_requests_.erase(tile_request);
     return;
   }
 
-  if (tile_request->second.failures++ == 0) {
-    ++failing_requests_;
-  }
+  ++tile_request->second.failures;
   if (!from_cache && isTemporaryError(reply_error)) {
     // keep the request pending, so the display keeps showing the tiles it has until the image
     // really arrives, and repeat the request with a delay not to overload the failing server
@@ -239,9 +235,6 @@ void TileClient::cancelRequest(const TileId & tile_id)
   }
   // the request is not in the map anymore, so its cancellation is not seen by its own report
   cancel(std::move(request.mapped()));
-  if (failing_requests_ == 0) {
-    error_.clear();
-  }
 }
 
 void TileClient::cancelRequests()
@@ -253,7 +246,6 @@ void TileClient::cancelRequests()
     cancel(std::move(tile_request.second));
   }
   error_.clear();
-  failing_requests_ = 0;
 }
 
 void TileClient::cancel(TileRequest && request)
@@ -261,7 +253,8 @@ void TileClient::cancel(TileRequest && request)
   if (request.reply != nullptr) {
     request.reply->abort();
   }
-  if (request.failures > 0 && --failing_requests_ == 0) {
+  if (request.failures > 0) {
+    // the reported failure was about the tile which is not requested anymore
     error_.clear();
   }
   try {
