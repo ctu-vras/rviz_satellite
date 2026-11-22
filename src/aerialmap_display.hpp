@@ -115,7 +115,7 @@ protected:
   TileClient tile_client_;
 
   TileMapInformation tile_map_info_;
-  std::map<TileId, std::future<QImage>> pending_tiles_;
+  std::map<TileId, std::shared_future<QImage>> pending_tiles_;
   std::map<TileId, TileObject> tiles_;
 
   /**
